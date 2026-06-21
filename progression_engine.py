@@ -264,7 +264,7 @@ def run_tracker():
                     pool = pool[~pool[id_col].astype(str).str.strip().isin(partner_ids)]
                 return pool
 
-            if selected_day.strip().lower() in mix_days:
+            if selected_day.strip() in mix_days:
                 day1_pool = get_primary_pool("day-1")
                 day2_pool = get_primary_pool("day-2")
 

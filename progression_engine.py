@@ -8,8 +8,8 @@ import pytz
 from export_log import show_export_tab
 
 # --- WEB APP SETTINGS ---
-st.set_page_config(page_title="My Workout", page_icon="💪")
-st.title("🏋️ Daily Workout Tracker")
+st.set_page_config(page_title="Carla's Workout", page_icon="💪")
+st.title("🏋️ Carla's Daily Workout Tracker")
 
 # --- TIMEZONE FIX ---
 eastern = pytz.timezone("America/New_York")
@@ -27,7 +27,7 @@ creds = Credentials.from_service_account_info(
 )
 client = gspread.authorize(creds)
 
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1iSyHuzl_aQFPm3R9XsyP7JO_o9m02AAJ1K_FEYwFo_M"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1QrVZ4eg2b2KLXDGgLzoU8useR__9kFYiZgR-A6lBotY"
 sheet = client.open_by_url(SHEET_URL)
 
 

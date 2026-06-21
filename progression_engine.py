@@ -3,6 +3,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
 import re
+import random
 from datetime import datetime
 import pytz
 from export_log import show_export_tab
@@ -38,19 +39,16 @@ def convert_drive_link(url):
         file_id = None
 
         if "drive.google.com/file/d/" in url:
-            # Format: https://drive.google.com/file/d/FILE_ID/view
             file_id = url.split("/file/d/")[1].split("/")[0]
         elif "uc?id=" in url:
-            # Format: https://drive.google.com/uc?id=FILE_ID
             file_id = url.split("uc?id=")[1].split("&")[0]
         elif "uc?export=view&id=" in url:
-            # Format: https://drive.google.com/uc?export=view&id=FILE_ID
             file_id = url.split("id=")[1].split("&")[0]
 
         if file_id:
             return f"https://drive.google.com/thumbnail?id={file_id}&sz=w400"
 
-        return url  # return as-is if we can't parse it
+        return url
     except Exception:
         return url
 
@@ -58,7 +56,7 @@ def convert_drive_link(url):
 def display_photos(photo_cell_value, width=250):
     """Display one or more photos from a comma-separated cell value."""
     if not photo_cell_value or str(photo_cell_value).strip().lower() in ["none", "", "n/a"]:
-        return  # No photo, skip silently
+        return
 
     urls = [u.strip() for u in str(photo_cell_value).split(",") if u.strip()]
     valid_urls = [u for u in urls if u.lower() not in ["none", "", "n/a"]]
@@ -88,23 +86,17 @@ def get_or_create_log_sheet():
 def display_exercise_block(row, name_col, sets_col, reps_col, notes_col,
                             photo_col, superset_col, superset_id_col,
                             superset_photo_col, df, ex_id="", is_superset_secondary=False):
-    """Display a single exercise block with name, targets, notes and photos.
-
-    This function intentionally does NOT render the superset radio control.
-    It returns metadata needed to render superset controls after the log form.
-    """
+    """Display a single exercise block with name, targets, notes and photos."""
 
     ex_name     = str(row[name_col]).strip() if name_col else "Unknown Exercise"
     target_sets = str(row[sets_col]).strip() if sets_col else "3"
     target_reps = str(row[reps_col]).strip() if reps_col else "10"
     notes       = str(row[notes_col]).strip() if notes_col else ""
     photo_val   = str(row[photo_col]).strip() if photo_col else ""
-    # original superset flag from sheet (used as default)
     row_superset_default = str(row[superset_col]).strip().lower() == "yes" if superset_col else False
     ss_ex_id    = str(row[superset_id_col]).strip() if superset_id_col else ""
     ss_photo    = str(row[superset_photo_col]).strip() if superset_photo_col else ""
 
-    # Render header, coaching note, photos (no superset UI here)
     st.markdown(f"**{ex_name}** — 🎯 {target_sets} sets × {target_reps} reps")
     if notes and notes.lower() not in ["none", ""]:
         st.info(f"📝 {notes}")
@@ -204,9 +196,9 @@ def run_tracker():
 
         # --- CREATE TABS ---
         tab1, tab2 = st.tabs(["Workout Tracker", "Export Log"])
-        
+
         with tab1:
-                # --- IDENTIFY COLUMNS ---
+            # --- IDENTIFY COLUMNS ---
             def normalize_col(col_name):
                 return re.sub(r"[^a-z0-9]", "", str(col_name).lower())
 
@@ -247,19 +239,43 @@ def run_tracker():
                         st.write(f"• **{day}**: {count} exercise(s)")
 
             # --- DAY SELECTOR ---
-            days_of_week = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            selected_day = st.selectbox("📅 Select Day", days_of_week, index=days_of_week.index(today))
+            available_days = sorted(
+                df[day_col].dropna().astype(str).str.strip().unique(),
+                key=lambda d: d.lower()
+            )
+            selected_day = st.selectbox("📅 Select Day", available_days, index=0)
 
             st.subheader(f"💪 {selected_day}'s Workout")
 
-            # --- FILTER WORKOUT ---
-            days_workout = df[df[day_col].str.strip().str.lower() == selected_day.lower()].copy()
-            split_col = find_col(df, "workoutsplit", "split")
-            if not days_workout.empty and split_col:
-                all_recovery = days_workout[split_col].str.strip().str.lower().eq("recovery").all()
-                if all_recovery:
-                    st.info("🎉 Rest day! Recovery is part of the program.")
-                    return
+            mix_days = ["day-3", "day-4"]  # these days pull randomly from Day-1 + Day-2 pools
+
+            def get_primary_pool(day_label):
+                """Return rows for a given day, excluding superset partner rows."""
+                pool = df[df[day_col].str.strip().str.lower() == day_label].copy()
+                if superset_id_col and id_col:
+                    partner_ids = set()
+                    for _, row in pool.iterrows():
+                        pid = str(row[superset_id_col]).strip()
+                        uses_flag = superset_col and str(row[superset_col]).strip().lower() == "yes"
+                        if pid and (uses_flag or not superset_col):
+                            partner_ids.add(pid)
+                    pool = pool[~pool[id_col].astype(str).str.strip().isin(partner_ids)]
+                return pool
+
+            if selected_day.strip().lower() in mix_days:
+                day1_pool = get_primary_pool("day-1")
+                day2_pool = get_primary_pool("day-2")
+
+                pick_count_1 = min(5, len(day1_pool))
+                pick_count_2 = min(5, len(day2_pool))
+
+                picked_1 = day1_pool.loc[random.sample(list(day1_pool.index), pick_count_1)] if pick_count_1 > 0 else day1_pool
+                picked_2 = day2_pool.loc[random.sample(list(day2_pool.index), pick_count_2)] if pick_count_2 > 0 else day2_pool
+
+                days_workout = pd.concat([picked_1, picked_2])
+                st.info(f"🎲 Mixed session: {pick_count_1} from Day-1 + {pick_count_2} from Day-2 (randomized)")
+            else:
+                days_workout = df[df[day_col].str.strip().str.lower() == selected_day.strip().lower()].copy()
 
             if days_workout.empty:
                 st.info("🎉 Rest day! Recovery is part of the program.")
@@ -277,7 +293,6 @@ def run_tracker():
                     if partner_id and (uses_superset_flag or not superset_col):
                         superset_partner_ids.add(partner_id)
 
-
             # --- WORKOUT FORM ---
             st.markdown("### Log Your Session")
             log_date = datetime.now(eastern).strftime("%Y-%m-%d")
@@ -285,13 +300,11 @@ def run_tracker():
             for idx, (_, row) in enumerate(days_workout.iterrows()):
                 ex_id = str(row[id_col]).strip() if id_col else ""
 
-                # Skip exercises that are superset partners — they display inside the primary block
                 if ex_id in superset_partner_ids:
                     continue
 
                 st.markdown("---")
 
-                # Render the header, coaching tip and photos (no superset UI yet)
                 ex_name, target_sets, target_reps, row_superset_default, ss_ex_id, ss_photo = display_exercise_block(
                     row, name_col, sets_col, reps_col, notes_col,
                     photo_col, superset_col, superset_id_col,
@@ -301,7 +314,6 @@ def run_tracker():
                 if not ex_name:
                     continue
 
-                # Per-exercise form: primary exercise logging and optional partner inputs
                 form_key = f"workout_form_{ex_id or re.sub(r'[^a-z0-9]', '_', ex_name.lower())}"
                 radio_key = f"superset_{ex_id}"
                 sup_choice = "No"
@@ -316,7 +328,6 @@ def run_tracker():
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # Render partner info outside the form
                     id_col_lookup = next((c for c in df.columns if str(c).lower().replace("_"," ").replace(" ","") == "exerciseid"), None)
                     partner_name = ss_ex_id
                     p_sets = "3"
@@ -361,7 +372,6 @@ def run_tracker():
 
                 with st.form(form_key):
                     col1, col2, col3, col4 = st.columns(4)
-                    # compute a sensible default index for sets selectbox
                     try:
                         default_sets = int(float(target_sets))
                     except Exception:
@@ -395,7 +405,6 @@ def run_tracker():
                     submitted = st.form_submit_button(f"💾 Save {ex_name}")
 
                     if submitted:
-                        # Save primary exercise row
                         log_ws.append_row([
                             log_date,
                             selected_day,
@@ -407,7 +416,6 @@ def run_tracker():
                         ])
 
                         if sup_choice == "Yes" and row_superset_default and ss_ex_id:
-                            # lookup partner name
                             id_col_lookup = next((c for c in df.columns if str(c).lower().replace("_"," ").replace(" ","") == "exerciseid"), None)
                             partner_name = ss_ex_id
                             if id_col_lookup and ss_ex_id:
@@ -436,7 +444,7 @@ def run_tracker():
                                     p_note_val
                                 ])
                         st.success(f"✅ Logged {ex_name} to Workout Log")
-        
+
         with tab2:
             workout_log_ws = get_or_create_log_sheet()
             show_export_tab(workout_log_ws)

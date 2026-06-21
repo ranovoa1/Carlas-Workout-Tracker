@@ -73,8 +73,9 @@ def display_photos(photo_cell_value, width=250):
                 st.image(convert_drive_link(url), width=width)
 
 
+@st.cache_resource
 def get_or_create_log_sheet():
-    """Get the workout log tab, or create it if it doesn't exist."""
+    """Get the workout log tab, or create it if it doesn't exist. Cached for the session."""
     try:
         return sheet.worksheet("Workout Log")
     except Exception:
@@ -158,27 +159,27 @@ def get_last_session(log_ws, exercise_name):
     }
 
 
+@st.cache_data(ttl=60)
+def load_workout_data():
+    """Read the workout sheet data once per minute instead of on every interaction."""
+    for ws in sheet.worksheets():
+        if ws.title == "Workout Log":
+            continue
+        data = ws.get_all_values()
+        for idx, row in enumerate(data[:10]):
+            row_cleaned = [
+                str(cell).lower().replace("_", "").replace(" ", "").strip()
+                for cell in row
+            ]
+            if 'dayofweek' in row_cleaned or 'exerciseid' in row_cleaned:
+                return data, idx
+    return None, None
+
+
 def run_tracker():
     try:
-        # --- SCAN FOR WORKOUT DATA TAB ---
-        raw_values = []
-        header_idx = None
-
-        for ws in sheet.worksheets():
-            if ws.title == "Workout Log":
-                continue
-            data = ws.get_all_values()
-            for idx, row in enumerate(data[:10]):
-                row_cleaned = [
-                    str(cell).lower().replace("_", "").replace(" ", "").strip()
-                    for cell in row
-                ]
-                if 'dayofweek' in row_cleaned or 'exerciseid' in row_cleaned:
-                    raw_values = data
-                    header_idx = idx
-                    break
-            if header_idx is not None:
-                break
+        # --- SCAN FOR WORKOUT DATA TAB (CACHED) ---
+        raw_values, header_idx = load_workout_data()
 
         if header_idx is None or not raw_values:
             st.error("❌ Could not find workout data in any tab.")

@@ -1,37 +1,114 @@
-[gcp_service_account]
-type = "service_account"
-project_id = "workout-tracker-backend-498217"
-private_key_id = "f883fd26c59a1c8c0dfce26777c960f3426fe6d2"
-client_email = "workout-logger@workout-tracker-backend-498217.iam.gserviceaccount.com"
-client_id = "106698860056352093834"
-auth_uri = "https://accounts.google.com/o/oauth2/auth"
-token_uri = "https://oauth2.googleapis.com/token"
+import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
 
-private_key = """-----BEGIN PRIVATE KEY-----
-MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCzKDxUDmwFApgm
-3j+Uyv6mS+S6DjOPaRc5BGKlcpX4Qzt7SyNFjIhxd5DHo3H3T/f6dtdvBHAEDgJ6
-Edjm471Dgq8BfcY8KVoJ9aLb0G3/Ah9lZ+KAqqDPb1U/bCdNCcFnKv4XD2uKneoo
-FRfLOae0WWFbmTvdSgMDn8i9Ovmz0U4k6/vSjH46vNjbetJV/Dq34b9etJuTdCNF
-JFyIHw1eVN/bIYy15ws2MMlkTtDBySkz5cpOclLfzPEh9K9b+rPvsxY+D/60DYLc
-lTBZOT1//7ONmGEv30mC5UK85gybuoFegaNBy0qqN+gdVwwGN0Qmb1ylQOOvxanv
-6pBeyaCnAgMBAAECggEAGant2mymdKFGgmrb2Mirac79WNmn8ScwuG40Y1bivMmE
-v8inqNLUyMxD5RU4wiCmeS6E9dZA5ZPMLwhXdduxxPX3c9M8jmmuCDczuSFGYH1B
-WhljjOLkXlKod4lap+J53fl+pHcFBLpSTKOY4PfFWkRjeeedd7mebOp6qwDDvEpF
-zPxok0el3h5ZChEl5UlVxhHlZDBNEyVqX7dAmngmQZByBmXa4GLmfTZUMKs1jv62
-MyPSL3Z2UH8Auek8M6s5Wl5vFZW0daMb5PCgjYXxzORAl+QefX8TeuqEaVSPEGCF
-fSwoLzZfnyUGuPyt4PsJGmcMIkvz9E6zzG/3tT6AwQKBgQDmo8rljzwLVqaxOR92
-BeMFB2OGB6YZmvRAuK3aMPh406gWGiY/dIIIF6KGTsg95iSe9AXhByE012+TAQUV
-8YdJsPZZF/osymm0pOBLeYnfUL5ETxVXJ1Ck6hQDq+BuzIa42r8K3LtuTQ12PxQy
-361IuuZM962m224I/QtUJkAoOQKBgQDG20Y9NhwrndYKm9ydsRZmPoSsk3A0buM2
-EdFcOeXg9PMnJ2gf0ackfk03AQkvbh+nUniwlDKHGcfmqokermukjpYWJ19j353f
-qxgcqWgNEHC7l9NA9qBJWwa2LlY2YV/obXbAOXia4JWBhSmuyLWOMkRGScTOOErB
-Qi0ccmVP3wKBgQCweMkJZtQ5lL6Mwblp081Fjsa+yeF0nBSh5OzZEzk7Mi/dYXq8
-eMf5qyPnAibC/fItUWeiK5Nj3Cd54oDirmCmqOmFeAwq82F4H+OivEcbAKvklmIs
-wl85IAXaXUunW4UFshIVHJmpJvnS7SbmWjE7gg4u/B/5mNITvJJLe80BOQKBgQDC
-kbI8GkGd+6V+Y9qNAMSl7e3q3agf5Y+zS+PJlWzzmzh+yvP6jiw4bMwoUX8nRVz7
-XppwS9DUl8kcTSg1OPxh2pHHw2Z2Vkomm0XQZYFFpxxmsLsnCSj0HXiHsPbx5nzs
-8o4KrzDueWhPfne2aPQb2dsr2uoRzMp4JcP13Yh7iQKBgQCtwrKS27uRSSn0MMsv
-ojoXOAmbni+8mu5UelmoCJjr6pNsvMRq4hEWz/cQZYDfJFGb9lHchwGufvyD/Ybb
-++7BLfyqonxjdNWtd4OVNngqbMdEzChs+oKtwQIXqLgY3FhT6/ue9iRbWsTg7RPp
-gWWhVekIXXjSLnxFGu7yjIAfjg==
------END PRIVATE KEY-----"""
+
+def show_export_tab(worksheet):
+    """
+    Displays the export tab with date filtering and export functionality.
+    
+    Args:
+        worksheet: A Google Sheets worksheet object with get_all_records() method
+    """
+    st.header("Export Workout Log")
+    
+    # Create date picker columns
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        from_date = st.date_input(
+            "From",
+            value=datetime.now() - timedelta(days=30),
+            format="YYYY-MM-DD"
+        )
+    
+    with col2:
+        to_date = st.date_input(
+            "To",
+            value=datetime.now(),
+            format="YYYY-MM-DD"
+        )
+    
+    # Generate Export button
+    if st.button("Generate Export", key="generate_export_btn"):
+        # Read data from worksheet
+        try:
+            records = worksheet.get_all_records()
+            
+            if not records:
+                st.warning("No data found in the worksheet.")
+                return
+            
+            # Convert to DataFrame for easier filtering
+            df = pd.DataFrame(records)
+            
+            # Convert Date column to datetime for filtering
+            df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
+            
+            # Filter by date range
+            mask = (df['Date'] >= pd.Timestamp(from_date)) & (df['Date'] <= pd.Timestamp(to_date))
+            filtered_df = df[mask].sort_values('Date')
+            
+            if filtered_df.empty:
+                st.warning(f"No records found between {from_date} and {to_date}")
+                return
+            
+            # Group by date and format as readable text
+            export_text = format_export(filtered_df)
+            
+            # Show preview in text area
+            st.code(export_text, language=None)
+            
+            # Download button
+            st.download_button(
+                label="Download as TXT",
+                data=export_text,
+                file_name=f"workout_log_{from_date}_{to_date}.txt",
+                mime="text/plain"
+            )
+        
+        except Exception as e:
+            st.error(f"Error generating export: {str(e)}")
+
+
+def format_export(df):
+    """
+    Formats the dataframe as clean, readable text grouped by date.
+    
+    Args:
+        df: DataFrame with workout data
+    
+    Returns:
+        Formatted string with grouped data
+    """
+    grouped = df.groupby('Date')
+    
+    output_lines = []
+    output_lines.append("=" * 60)
+    output_lines.append("WORKOUT LOG EXPORT")
+    output_lines.append("=" * 60)
+    output_lines.append("")
+    
+    for date, group in grouped:
+        date_str = date.strftime("%A, %B %d, %Y")
+        output_lines.append(f"\n{date_str}")
+        output_lines.append("-" * 40)
+        
+        for _, row in group.iterrows():
+            exercise = row['Exercise']
+            sets = row['Sets']
+            reps = row['Reps Done']
+            weight = row['Weight (lbs)']
+            notes = row['Notes']
+            
+            # Format exercise line
+            output_lines.append(f"  {exercise}")
+            output_lines.append(f"    Sets: {sets} | Reps: {reps} | Weight: {weight} lbs")
+            
+            if notes and str(notes).strip():
+                output_lines.append(f"    Notes: {notes}")
+            
+            output_lines.append("")
+    
+    output_lines.append("=" * 60)
+    

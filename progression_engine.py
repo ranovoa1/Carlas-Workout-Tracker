@@ -240,15 +240,16 @@ def run_tracker():
                         st.write(f"• **{day}**: {count} exercise(s)")
 
             # --- DAY SELECTOR ---
-            available_days = sorted(
+            mix_days = ["Day-3", "Day-4"]  # virtual days, not actual rows in the sheet
+
+            sheet_days = sorted(
                 df[day_col].dropna().astype(str).str.strip().unique(),
                 key=lambda d: d.lower()
             )
+            available_days = sheet_days + [d for d in mix_days if d not in sheet_days]
             selected_day = st.selectbox("📅 Select Day", available_days, index=0)
 
             st.subheader(f"💪 {selected_day}'s Workout")
-
-            mix_days = ["day-3", "day-4"]  # these days pull randomly from Day-1 + Day-2 pools
 
             def get_primary_pool(day_label):
                 """Return rows for a given day, excluding superset partner rows."""

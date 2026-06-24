@@ -330,11 +330,15 @@ def run_tracker():
                     </div>
                     """, unsafe_allow_html=True)
 
+                    # Look up partner data only — nothing is displayed here.
+                    # It now renders inside the form, directly above its own
+                    # fields, so each exercise's photo sits next to its inputs.
                     id_col_lookup = next((c for c in df.columns if str(c).lower().replace("_"," ").replace(" ","") == "exerciseid"), None)
                     partner_name = ss_ex_id
                     p_sets = "3"
                     p_reps = "10"
                     p_notes = ""
+                    partner_rows = pd.DataFrame()
 
                     if id_col_lookup and ss_ex_id:
                         partner_rows = df[df[id_col_lookup].str.strip() == ss_ex_id]
@@ -344,22 +348,12 @@ def run_tracker():
                             p_sets = str(partner[sets_col]).strip() if sets_col else "3"
                             p_reps = str(partner[reps_col]).strip() if reps_col else "10"
                             p_notes = str(partner[notes_col]).strip() if notes_col else ""
-                            st.markdown(f"**{partner_name}**")
-                            st.caption(f"🎯 {p_sets} sets × {p_reps} reps")
-                            if p_notes and p_notes.lower() not in ["none", ""]:
-                                st.info(f"📝 {p_notes}")
-                        else:
-                            st.markdown(f"**{ss_ex_id}**")
 
                     partner_photo = ""
-                    try:
-                        if id_col_lookup and ss_ex_id and not partner_rows.empty:
-                            partner_photo = str(partner[photo_col]).strip() if photo_col else ""
-                    except Exception:
-                        partner_photo = ""
+                    if not partner_rows.empty and photo_col:
+                        partner_photo = str(partner[photo_col]).strip()
 
                     chosen_photo = partner_photo if partner_photo and partner_photo.lower() not in ["none", ""] else ss_photo
-                    display_photos(chosen_photo)
 
                 last = get_last_session(log_ws, ex_name)
                 if last:
@@ -389,6 +383,12 @@ def run_tracker():
                         log_note = st.text_input("Notes", key=f"notes_{ex_id}", placeholder="optional")
 
                     if st.session_state.get(radio_key, "No") == "Yes" and row_superset_default and ss_ex_id:
+                        st.markdown("---")
+                        st.markdown(f"**{partner_name}** — 🎯 {p_sets} sets × {p_reps} reps")
+                        if p_notes and p_notes.lower() not in ["none", ""]:
+                            st.info(f"📝 {p_notes}")
+                        display_photos(chosen_photo)
+
                         try:
                             p_default_sets = int(float(p_sets))
                         except Exception:

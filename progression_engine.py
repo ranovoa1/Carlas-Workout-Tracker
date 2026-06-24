@@ -133,6 +133,16 @@ def get_last_session(log_ws, exercise_name):
             if pr_weight is None or weight > pr_weight:
                 pr_weight = weight
 
+    # Best reps achieved at the PR weight (for "same weight, more reps" PRs)
+    pr_reps_at_pr_weight = None
+    if pr_weight is not None:
+        for record in history:
+            weight = parse_float(record.get("Weight (lbs)", ""))
+            reps = parse_float(record.get("Reps Done", ""))
+            if weight is not None and weight == pr_weight and reps is not None:
+                if pr_reps_at_pr_weight is None or reps > pr_reps_at_pr_weight:
+                    pr_reps_at_pr_weight = reps
+
     def parse_date(value):
         try:
             return datetime.fromisoformat(str(value).strip())
@@ -156,7 +166,37 @@ def get_last_session(log_ws, exercise_name):
         "reps": str(latest.get("Reps Done", "")).strip(),
         "weight": str(latest.get("Weight (lbs)", "")).strip(),
         "pr_weight": pr_weight,
+        "pr_reps_at_pr_weight": pr_reps_at_pr_weight,
     }
+
+
+def check_new_pr(last, new_weight, new_reps):
+    """Return True if new_weight/new_reps beats the prior best:
+    a heavier weight than ever before, OR the same/heavier weight
+    with more reps than previously done at that weight."""
+    def parse_float(value):
+        try:
+            return float(str(value).strip())
+        except Exception:
+            return None
+
+    weight_val = parse_float(new_weight)
+    reps_val = parse_float(new_reps)
+    if weight_val is None:
+        return False
+
+    if not last or last.get("pr_weight") is None:
+        # No prior history at all — first logged set counts as a PR
+        return True
+
+    pr_weight = last["pr_weight"]
+    pr_reps = last.get("pr_reps_at_pr_weight")
+
+    if weight_val > pr_weight:
+        return True
+    if weight_val == pr_weight and reps_val is not None and pr_reps is not None and reps_val > pr_reps:
+        return True
+    return False
 
 
 @st.cache_data(ttl=60)
@@ -281,171 +321,184 @@ def run_tracker():
 
             if days_workout.empty:
                 st.info("🎉 Rest day! Recovery is part of the program.")
-                return
+            else:
+                # --- LOG SHEET ---
+                log_ws = get_or_create_log_sheet()
 
-            # --- LOG SHEET ---
-            log_ws = get_or_create_log_sheet()
+                # --- TRACK WHICH EXERCISE IDS ARE SUPERSET PARTNERS (skip as standalone) ---
+                superset_partner_ids = set()
+                if superset_id_col and id_col:
+                    for _, row in days_workout.iterrows():
+                        partner_id = str(row[superset_id_col]).strip()
+                        uses_superset_flag = superset_col and str(row[superset_col]).strip().lower() == "yes"
+                        if partner_id and (uses_superset_flag or not superset_col):
+                            superset_partner_ids.add(partner_id)
 
-            # --- TRACK WHICH EXERCISE IDS ARE SUPERSET PARTNERS (skip as standalone) ---
-            superset_partner_ids = set()
-            if superset_id_col and id_col:
-                for _, row in days_workout.iterrows():
-                    partner_id = str(row[superset_id_col]).strip()
-                    uses_superset_flag = superset_col and str(row[superset_col]).strip().lower() == "yes"
-                    if partner_id and (uses_superset_flag or not superset_col):
-                        superset_partner_ids.add(partner_id)
+                # --- WORKOUT FORM ---
+                st.markdown("### 💖 Log Your Session")
+                log_date = datetime.now(eastern).strftime("%Y-%m-%d")
 
-            # --- WORKOUT FORM ---
-            st.markdown("### 💖 Log Your Session")
-            log_date = datetime.now(eastern).strftime("%Y-%m-%d")
+                for idx, (_, row) in enumerate(days_workout.iterrows()):
+                    ex_id = str(row[id_col]).strip() if id_col else ""
 
-            for idx, (_, row) in enumerate(days_workout.iterrows()):
-                ex_id = str(row[id_col]).strip() if id_col else ""
+                    if ex_id in superset_partner_ids:
+                        continue
 
-                if ex_id in superset_partner_ids:
-                    continue
+                    st.markdown("---")
 
-                st.markdown("---")
+                    ex_name, target_sets, target_reps, row_superset_default, ss_ex_id, ss_photo = display_exercise_block(
+                        row, name_col, sets_col, reps_col, notes_col,
+                        photo_col, superset_col, superset_id_col,
+                        superset_photo_col, df, ex_id=ex_id
+                    )
 
-                ex_name, target_sets, target_reps, row_superset_default, ss_ex_id, ss_photo = display_exercise_block(
-                    row, name_col, sets_col, reps_col, notes_col,
-                    photo_col, superset_col, superset_id_col,
-                    superset_photo_col, df, ex_id=ex_id
-                )
+                    if not ex_name:
+                        continue
 
-                if not ex_name:
-                    continue
+                    form_key = f"workout_form_{ex_id or re.sub(r'[^a-z0-9]', '_', ex_name.lower())}"
+                    radio_key = f"superset_{ex_id}"
+                    sup_choice = "No"
+                    if row_superset_default and ss_ex_id:
+                        st.radio("Superset?", ["No", "Yes"], index=0, key=radio_key)
+                        sup_choice = st.session_state.get(radio_key, "No")
 
-                form_key = f"workout_form_{ex_id or re.sub(r'[^a-z0-9]', '_', ex_name.lower())}"
-                radio_key = f"superset_{ex_id}"
-                sup_choice = "No"
-                if row_superset_default and ss_ex_id:
-                    st.radio("Superset?", ["No", "Yes"], index=0, key=radio_key)
-                    sup_choice = st.session_state.get(radio_key, "No")
+                    if sup_choice == "Yes" and row_superset_default and ss_ex_id:
+                        st.markdown(f"""
+                        <div style='background-color:#1e3a5f;padding:10px;border-radius:8px;margin-bottom:4px'>
+                            <span style='color:#f0a500;font-weight:bold;font-size:13px'>✨ SUPERSET ✨</span>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-                if sup_choice == "Yes" and row_superset_default and ss_ex_id:
-                    st.markdown(f"""
-                    <div style='background-color:#1e3a5f;padding:10px;border-radius:8px;margin-bottom:4px'>
-                        <span style='color:#f0a500;font-weight:bold;font-size:13px'>✨ SUPERSET ✨</span>
-                    </div>
-                    """, unsafe_allow_html=True)
+                        id_col_lookup = next((c for c in df.columns if str(c).lower().replace("_"," ").replace(" ","") == "exerciseid"), None)
+                        partner_name = ss_ex_id
+                        p_sets = "3"
+                        p_reps = "10"
+                        p_notes = ""
+                        partner_rows = pd.DataFrame()
 
-                    # Look up partner data only — nothing is displayed here.
-                    # It now renders inside the form, directly above its own
-                    # fields, so each exercise's photo sits next to its inputs.
-                    id_col_lookup = next((c for c in df.columns if str(c).lower().replace("_"," ").replace(" ","") == "exerciseid"), None)
-                    partner_name = ss_ex_id
-                    p_sets = "3"
-                    p_reps = "10"
-                    p_notes = ""
-                    partner_rows = pd.DataFrame()
+                        if id_col_lookup and ss_ex_id:
+                            partner_rows = df[df[id_col_lookup].str.strip() == ss_ex_id]
+                            if not partner_rows.empty:
+                                partner = partner_rows.iloc[0]
+                                partner_name = str(partner[name_col]).strip() if name_col else ss_ex_id
+                                p_sets = str(partner[sets_col]).strip() if sets_col else "3"
+                                p_reps = str(partner[reps_col]).strip() if reps_col else "10"
+                                p_notes = str(partner[notes_col]).strip() if notes_col else ""
 
-                    if id_col_lookup and ss_ex_id:
-                        partner_rows = df[df[id_col_lookup].str.strip() == ss_ex_id]
-                        if not partner_rows.empty:
-                            partner = partner_rows.iloc[0]
-                            partner_name = str(partner[name_col]).strip() if name_col else ss_ex_id
-                            p_sets = str(partner[sets_col]).strip() if sets_col else "3"
-                            p_reps = str(partner[reps_col]).strip() if reps_col else "10"
-                            p_notes = str(partner[notes_col]).strip() if notes_col else ""
+                        partner_photo = ""
+                        if not partner_rows.empty and photo_col:
+                            partner_photo = str(partner[photo_col]).strip()
 
-                    partner_photo = ""
-                    if not partner_rows.empty and photo_col:
-                        partner_photo = str(partner[photo_col]).strip()
+                        chosen_photo = partner_photo if partner_photo and partner_photo.lower() not in ["none", ""] else ss_photo
 
-                    chosen_photo = partner_photo if partner_photo and partner_photo.lower() not in ["none", ""] else ss_photo
-
-                last = get_last_session(log_ws, ex_name)
-                if last:
-                    is_pr = False
-                    try:
-                        last_weight = float(last["weight"])
-                        is_pr = last["pr_weight"] is not None and last_weight == last["pr_weight"]
-                    except Exception:
+                    last = get_last_session(log_ws, ex_name)
+                    if last:
                         is_pr = False
-                    pr_badge = " ⭐ PR" if is_pr else ""
-                    st.caption(f"📊 Last session ({last['date']}): {last['sets']} sets × {last['reps']} reps @ {last['weight']} lbs{pr_badge}")
-
-                with st.form(form_key):
-                    col1, col2, col3, col4 = st.columns(4)
-                    try:
-                        default_sets = int(float(target_sets))
-                    except Exception:
-                        default_sets = 3
-                    sets_index = min(max(default_sets - 1, 0), 3)
-                    with col1:
-                        sets_selected = st.selectbox("Sets", [1, 2, 3, 4], index=sets_index, key=f"sets_{ex_id}")
-                    with col2:
-                        reps_done = st.text_input("Reps done", key=f"reps_{ex_id}", placeholder=target_reps)
-                    with col3:
-                        weight = st.text_input("Weight (lbs)", key=f"weight_{ex_id}", placeholder="0")
-                    with col4:
-                        log_note = st.text_input("Notes", key=f"notes_{ex_id}", placeholder="optional")
-
-                    if st.session_state.get(radio_key, "No") == "Yes" and row_superset_default and ss_ex_id:
-                        st.markdown("---")
-                        st.markdown(f"**{partner_name}** — 🎯 {p_sets} sets × {p_reps} reps")
-                        if p_notes and p_notes.lower() not in ["none", ""]:
-                            st.info(f"📝 {p_notes}")
-                        display_photos(chosen_photo)
-
                         try:
-                            p_default_sets = int(float(p_sets))
+                            last_weight = float(last["weight"])
+                            is_pr = last["pr_weight"] is not None and last_weight == last["pr_weight"]
                         except Exception:
-                            p_default_sets = 3
-                        p_sets_index = min(max(p_default_sets - 1, 0), 3)
-                        p_col1, p_col2, p_col3, p_col4 = st.columns(4)
-                        with p_col1:
-                            p_sets_selected = st.selectbox("Sets", [1, 2, 3, 4], index=p_sets_index, key=f"partner_sets_{ss_ex_id}_{idx}")
-                        with p_col2:
-                            p_reps_done = st.text_input("Reps done", key=f"partner_reps_{ss_ex_id}_{idx}", placeholder=p_reps)
-                        with p_col3:
-                            p_weight = st.text_input("Weight (lbs)", key=f"partner_weight_{ss_ex_id}_{idx}", placeholder="0")
-                        with p_col4:
-                            p_note = st.text_input("Notes", key=f"partner_notes_{ss_ex_id}_{idx}", placeholder="optional")
+                            is_pr = False
+                        pr_badge = " ⭐ PR" if is_pr else ""
+                        st.caption(f"📊 Last session ({last['date']}): {last['sets']} sets × {last['reps']} reps @ {last['weight']} lbs{pr_badge}")
 
-                    submitted = st.form_submit_button(f"💾 Save {ex_name}")
+                    with st.form(form_key):
+                        col1, col2, col3, col4 = st.columns(4)
+                        try:
+                            default_sets = int(float(target_sets))
+                        except Exception:
+                            default_sets = 3
+                        sets_index = min(max(default_sets - 1, 0), 3)
+                        with col1:
+                            sets_selected = st.selectbox("Sets", [1, 2, 3, 4], index=sets_index, key=f"sets_{ex_id}")
+                        with col2:
+                            reps_done = st.text_input("Reps done", key=f"reps_{ex_id}", placeholder=target_reps)
+                        with col3:
+                            weight = st.text_input("Weight (lbs)", key=f"weight_{ex_id}", placeholder="0")
+                        with col4:
+                            log_note = st.text_input("Notes", key=f"notes_{ex_id}", placeholder="optional")
 
-                    if submitted:
-                        log_ws.append_row([
-                            log_date,
-                            selected_day,
-                            ex_name,
-                            sets_selected,
-                            reps_done,
-                            weight,
-                            log_note
-                        ])
+                        if st.session_state.get(radio_key, "No") == "Yes" and row_superset_default and ss_ex_id:
+                            st.markdown("---")
+                            st.markdown(f"**{partner_name}** — 🎯 {p_sets} sets × {p_reps} reps")
+                            if p_notes and p_notes.lower() not in ["none", ""]:
+                                st.info(f"📝 {p_notes}")
+                            display_photos(chosen_photo)
 
-                        if sup_choice == "Yes" and row_superset_default and ss_ex_id:
-                            id_col_lookup = next((c for c in df.columns if str(c).lower().replace("_"," ").replace(" ","") == "exerciseid"), None)
-                            partner_name = ss_ex_id
-                            if id_col_lookup and ss_ex_id:
-                                partner_rows = df[df[id_col_lookup].str.strip() == ss_ex_id]
-                                if not partner_rows.empty:
-                                    partner = partner_rows.iloc[0]
-                                    partner_name = str(partner[name_col]).strip() if name_col else ss_ex_id
+                            try:
+                                p_default_sets = int(float(p_sets))
+                            except Exception:
+                                p_default_sets = 3
+                            p_sets_index = min(max(p_default_sets - 1, 0), 3)
+                            p_col1, p_col2, p_col3, p_col4 = st.columns(4)
+                            with p_col1:
+                                p_sets_selected = st.selectbox("Sets", [1, 2, 3, 4], index=p_sets_index, key=f"partner_sets_{ss_ex_id}_{idx}")
+                            with p_col2:
+                                p_reps_done = st.text_input("Reps done", key=f"partner_reps_{ss_ex_id}_{idx}", placeholder=p_reps)
+                            with p_col3:
+                                p_weight = st.text_input("Weight (lbs)", key=f"partner_weight_{ss_ex_id}_{idx}", placeholder="0")
+                            with p_col4:
+                                p_note = st.text_input("Notes", key=f"partner_notes_{ss_ex_id}_{idx}", placeholder="optional")
 
-                            p_sets_key = f"partner_sets_{ss_ex_id}_{idx}"
-                            p_reps_key = f"partner_reps_{ss_ex_id}_{idx}"
-                            p_weight_key = f"partner_weight_{ss_ex_id}_{idx}"
-                            p_note_key = f"partner_notes_{ss_ex_id}_{idx}"
-                            p_sets_val = st.session_state.get(p_sets_key, None)
-                            p_reps_val = st.session_state.get(p_reps_key, "")
-                            p_weight_val = st.session_state.get(p_weight_key, "")
-                            p_note_val = st.session_state.get(p_note_key, "")
+                        submitted = st.form_submit_button(f"💾 Save {ex_name}")
 
-                            if partner_name:
-                                log_ws.append_row([
-                                    log_date,
-                                    selected_day,
-                                    partner_name,
-                                    p_sets_val if p_sets_val is not None else "",
-                                    p_reps_val,
-                                    p_weight_val,
-                                    p_note_val
-                                ])
-                        st.success(f"✅ Logged {ex_name} to Workout Log")
+                        if submitted:
+                            log_ws.append_row([
+                                log_date,
+                                selected_day,
+                                ex_name,
+                                sets_selected,
+                                reps_done,
+                                weight,
+                                log_note
+                            ])
+
+                            primary_is_pr = check_new_pr(last, weight, reps_done)
+
+                            partner_is_pr = False
+                            if sup_choice == "Yes" and row_superset_default and ss_ex_id:
+                                id_col_lookup = next((c for c in df.columns if str(c).lower().replace("_"," ").replace(" ","") == "exerciseid"), None)
+                                partner_name = ss_ex_id
+                                if id_col_lookup and ss_ex_id:
+                                    partner_rows = df[df[id_col_lookup].str.strip() == ss_ex_id]
+                                    if not partner_rows.empty:
+                                        partner = partner_rows.iloc[0]
+                                        partner_name = str(partner[name_col]).strip() if name_col else ss_ex_id
+
+                                p_sets_key = f"partner_sets_{ss_ex_id}_{idx}"
+                                p_reps_key = f"partner_reps_{ss_ex_id}_{idx}"
+                                p_weight_key = f"partner_weight_{ss_ex_id}_{idx}"
+                                p_note_key = f"partner_notes_{ss_ex_id}_{idx}"
+                                p_sets_val = st.session_state.get(p_sets_key, None)
+                                p_reps_val = st.session_state.get(p_reps_key, "")
+                                p_weight_val = st.session_state.get(p_weight_key, "")
+                                p_note_val = st.session_state.get(p_note_key, "")
+
+                                if partner_name:
+                                    partner_last = get_last_session(log_ws, partner_name)
+                                    partner_is_pr = check_new_pr(partner_last, p_weight_val, p_reps_val)
+
+                                    log_ws.append_row([
+                                        log_date,
+                                        selected_day,
+                                        partner_name,
+                                        p_sets_val if p_sets_val is not None else "",
+                                        p_reps_val,
+                                        p_weight_val,
+                                        p_note_val
+                                    ])
+
+                            if primary_is_pr and partner_is_pr:
+                                st.success(f"🎉 NEW PR! {ex_name} and {partner_name} both hit a personal record!")
+                                st.balloons()
+                            elif primary_is_pr:
+                                st.success(f"🎉 NEW PR! {ex_name} — {weight} lbs × {reps_done} reps")
+                                st.balloons()
+                            elif partner_is_pr:
+                                st.success(f"🎉 NEW PR! {partner_name} — {p_weight_val} lbs × {p_reps_val} reps")
+                                st.balloons()
+                            else:
+                                st.success(f"✅ Logged {ex_name} to Workout Log")
 
         with tab2:
             workout_log_ws = get_or_create_log_sheet()
